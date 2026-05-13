@@ -1,55 +1,128 @@
-// Box is a pointer that stores some data on the heap. If the data is unsized, then it's two pointers
+use core::ops::Deref;
+use core::ops::DerefMut;
 
-use alloc::alloc::{ alloc, dealloc, Layout};
+use core::alloc::Layout;
+use alloc::alloc::alloc;
 
-pub struct MyBoxI32 {
-    address: *mut i32,
+pub struct MyBox<T> {
+    ptr: *mut T,
 }
 
-impl MyBoxI32 {
-    pub fn new(data: i32) -> Self {
-    // how to the address of data
-        // reference -> raw pointer -> address (usize)
-        // let data_address = &data as *const i32 as usize;
-        // newer version: &raw const data
+fn get_layout<T>() -> Layout {
+    let size = core::mem::size_of::<T>();
+    let align = core::mem::align_of::<T>();
+    unsafe { Layout::from_size_align_unchecked(size, align) }
+}
 
-    // move the pointer from stack to heap
-        // size: how much space I need
-        // align: must be a power of two - align 4 means "address must be multiple of 4"
-        let layout = unsafe { Layout::from_size_align_unchecked(4,4) };
-        // two types of raw pointers: *const, *mut
-        let address = unsafe { alloc(layout) } as *mut i32;
 
-    // initialise the heap memory
-        // overwrites a memory location with the given value without reading or dropping the old value
-        unsafe { core::ptr::write(address, data) };
 
-        Self {address}
-    }
+// move is:
+// - "destructive"  - the old location is unavailable (destroyed) - this is NOTHING TO DO WITH `Drop`. This is 100% a compiler-error-message thing. This does not do anything at runtime, juts gives you errors at compile time
+// - "bitwise"      - the memory in the original place is copied bit-for-bit exactly to the new place
+// - "copy"         
 
-    pub fn get(&self) -> i32 {
-        unsafe { *self.address }
+// #[test]
+// fn use_dog() {
+//     // pretend `String` is copy
+//     let s = String::from("hello\n");
+//     let t = s;
+
+//     drop(t);
+//     drop(s);
+// }
+
+// assert_eq!(t, t.clone());
+
+impl<T> MyBox<T> {
+    pub fn new(value: T) -> Self {
+        // *mut T = &mut T (except, YOU are responsible for safety, not the compiler)
+        // *mut T is a "raw pointer"
+        // 1. allocate space on the heap for the i32 (and remember the pointer)
+        // 2. move the i32 to the heap
+        // 3. use the pointer we got in step 1 to create a `Self` and return it
+        
+        let ptr = unsafe { alloc(get_layout::<T>()) };
+        let ptr = ptr as *mut T;
+
+        unsafe { core::ptr::write(ptr, value) };
+
+        Self { ptr }
     }
 }
 
-impl Drop for MyBoxI32 {
+impl<T> Drop for MyBox<T> {
     fn drop(&mut self) {
-        let layout = unsafe { Layout::from_size_align_unchecked(4, 4) };
-        unsafe { dealloc(self.address as *mut u8, layout) }
+        unsafe {
+            core::ptr::drop_in_place(self.ptr);
+            alloc::alloc::dealloc(self.ptr as *mut u8, get_layout::<T>());
+        }
+    }
+}
+
+impl<T> Deref for MyBox<T> {
+    type Target = T;
+    fn deref(&self) -> &<Self as Deref>::Target {
+        unsafe { &*self.ptr }
+    }
+}
+
+impl<T> DerefMut for MyBox<T> {
+    fn deref_mut(&mut self) -> &mut <Self as Deref>::Target {
+        unsafe { &mut *self.ptr }
     }
 }
 
 #[test]
-fn get_address() {
-    let my_box = MyBoxI32::new(123);
-    // {foo} prints foo using trait Display
-    // {foo:?} prints foo using trait Debug
-    // {foo:p} prints foo using trait Pointer (prints it like a pointer: 0x12345678)
-    println!("address: {:p}",my_box.address);
+fn simple_test() {
+    let mut my_box = MyBox::new(vec![1, 2, 3]);
+    let get = &*my_box;
+    assert_eq!(get.clone(), vec![1, 2, 3]);
+
+    *my_box = vec![1, 2, 3, 4];
+    assert_eq!(my_box.len(), 4);
+    
+    
 }
 
+// let b = MyBox::new(123);
+// 
+// A implements Deref<Target = B>
+// - "A is a wrapper around a B"
+// - "A contains a B"
+// 
+// Deref enables two language features:
+// - a.b() will work if `b` is a method on the deref target
+// - if you have a function that takes &B, you can pass a &A
+// - fn foo(x: &[u8]) {}   -> let v = vec![1, 2, 3]; foo(&v)
+// 
+// [T] - a slice - 
+// - &[T]  &str
+// - Box<[T]>  Box<str>
+// - Arc<[T]>  Arc<str>
+// 
+// Box<T> implements Deref<Target = T>
+// Vec<T> implements Deref<Target = [T]>
+// - so, &Vec<T> can be treated like a &[T]
+// 
+
+
 #[test]
-fn can_create_and_get() {
-    let my_box = MyBoxI32::new(123);
-    assert_eq!(my_box.get(), 123);
+fn foo() {
+    fn print_length(s: &str) {
+        println!("{}", s.len());
+    }
+    
+    let s = String::from("hello");
+    let b = Box::new(s);
+    b.to_lowercase();
+    print_length(&b);
+    let v = vec![2, 3, 4];
+    v.iter();
+    // a.b();
+    // 1. look at type of `a`, does it have a method called `b`?
+    // 2. if not, look at all the traits that are in-scope (i.e. there is a `use whatever::Trait` in this file). Do any of them BOTH:
+    //   - are implemented by `a`
+    //   - have a method called `b`
+    // 3. if not, does `a` implement `Deref`? If it does, find the target type, and go back to step 1
+    
 }

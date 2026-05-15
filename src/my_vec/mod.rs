@@ -1,9 +1,10 @@
 use alloc::alloc::alloc;
 use alloc::alloc::dealloc;
 use core::alloc::Layout;
+use core::ptr::NonNull;
 
 pub struct MyVec<T> {
-    ptr: *mut T,
+    ptr: NonNull<T>,
     len: usize,
     cap: usize,
 }
@@ -18,14 +19,15 @@ fn layout_for_capacity<T>(cap: usize) -> Layout {
 impl<T> MyVec<T> {
     pub fn new() -> Self {
         Self {
-            ptr: core::ptr::null_mut(),
+            ptr: NonNull::dangling(),
             len: 0,
             cap: 0,
         }
     }
     pub fn with_capacity(cap: usize) -> Self {
-        let ptr = unsafe { alloc::alloc::alloc(layout_for_capacity::<T>(cap)) } as *mut T;
-        Self { ptr, len: 0, cap }
+        let ptr = unsafe { alloc::alloc::alloc(layout_for_capacity::<T>(cap)) as *mut T};
+        let non_null = NonNull::new(ptr).unwrap();
+        Self { ptr: non_null, len: 0, cap }
     }
 
     pub fn push(&mut self, value: T) {
@@ -38,7 +40,7 @@ impl<T> MyVec<T> {
         }
 
         let end_ptr = unsafe { self.ptr.add(self.len()) };
-        unsafe { core::ptr::write(end_ptr, value) };
+        unsafe { core::ptr::write(end_ptr.as_ptr(), value) };
         self.len +=1
     }
 
@@ -55,7 +57,7 @@ impl<T> MyVec<T> {
         if n >= self.len() {
             None
         } else {
-            let result = unsafe { self.ptr.add(n) };
+            let result = unsafe { self.ptr.as_ptr().add(n) };
             Some(result)
         }
     }
@@ -74,15 +76,15 @@ impl<T> MyVec<T> {
         let new_ptr = unsafe { alloc(layout_for_capacity::<T>(new_cap)) } as *mut T;
 
         // 2.
-        unsafe { core::ptr::copy(self.ptr, new_ptr, self.len()) };
+        unsafe { core::ptr::copy(self.ptr.as_ptr(), new_ptr, self.len()) };
 
         // 4.
         if self.cap != 0 {
-            unsafe { dealloc(self.ptr as *mut u8, layout_for_capacity::<T>(self.len())) };
+            unsafe { dealloc(self.ptr.as_ptr() as *mut u8, layout_for_capacity::<T>(self.len())) };
         }
 
         // 5.
-        self.ptr = new_ptr;
+        self.ptr = NonNull::new(new_ptr).unwrap();
         self.cap = new_cap;
     }
 }
@@ -91,9 +93,9 @@ impl<T> Drop for MyVec<T> {
     fn drop(&mut self) {
         unsafe {
             for i in 0..self.len() {
-                core::ptr::drop_in_place(self.ptr.add(i));
+                core::ptr::drop_in_place(self.ptr.as_ptr().add(i));
             }
-            dealloc(self.ptr as *mut u8, layout_for_capacity::<T>(self.cap))
+            dealloc(self.ptr.as_ptr() as *mut u8, layout_for_capacity::<T>(self.cap))
         };
     }
 }

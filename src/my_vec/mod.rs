@@ -5,13 +5,14 @@ use core::alloc::Layout;
 pub struct MyVec<T> {
     ptr: *mut T,
     len: usize,
+    cap: usize,
 }
 
-fn layout_for_n_ts<T>(n: usize) -> Layout {
+fn layout_for_capacity<T>(cap: usize) -> Layout {
     let size = core::mem::size_of::<T>();
     let align = core::mem::align_of::<T>();
 
-    unsafe { Layout::from_size_align_unchecked(size * n, align) }
+    unsafe { Layout::from_size_align_unchecked(size * cap, align) }
 }
 
 impl<T> MyVec<T> {
@@ -19,35 +20,26 @@ impl<T> MyVec<T> {
         Self {
             ptr: core::ptr::null_mut(),
             len: 0,
+            cap: 0,
         }
+    }
+    pub fn with_capacity(cap: usize) -> Self {
+        let ptr = unsafe { alloc::alloc::alloc(layout_for_capacity::<T>(cap)) } as *mut T;
+        Self { ptr, len: 0, cap }
     }
 
     pub fn push(&mut self, value: T) {
-        // 1. new heap allocation with space for the new value
-        // 2. copy the old values to the new allocation
-        // 3. copy the new value to the new allocation
-        // 4. clean up the old allocation
-        // 5. update self so the fields are correct again
-
-        // 1.
-        let space_required = self.len() + 1;
-        let new_ptr = unsafe { alloc(layout_for_n_ts::<T>(space_required)) } as *mut T;
-
-        // 2.
-        unsafe { core::ptr::copy(self.ptr, new_ptr, self.len()) };
-
-        // 3.
-        let end_ptr = unsafe { new_ptr.add(self.len()) };
-        unsafe { core::ptr::write(end_ptr, value) };
-
-        // 4.
-        if self.len() != 0 {
-            unsafe { dealloc(self.ptr as *mut u8, layout_for_n_ts::<T>(self.len())) };
+        if !self.can_insert_without_reallocating() {
+            if self.cap == 0 {
+                self.reallocate(8);
+            } else {
+                self.reallocate(self.cap * 2);
+            }
         }
 
-        // 5.
-        self.ptr = new_ptr;
-        self.len += 1;
+        let end_ptr = unsafe { self.ptr.add(self.len()) };
+        unsafe { core::ptr::write(end_ptr, value) };
+        self.len +=1
     }
 
     pub fn get(&self, index: usize) -> Option<&T> {
@@ -67,6 +59,32 @@ impl<T> MyVec<T> {
             Some(result)
         }
     }
+
+    fn can_insert_without_reallocating(&self) -> bool {
+        self.len < self.cap
+    }
+
+    fn reallocate(&mut self, new_cap: usize) {
+        // 1. new heap allocation with space for the new value
+        // 2. copy the old values to the new allocation
+        // 4. clean up the old allocation
+        // 5. update self so the fields are correct again
+
+        // 1.
+        let new_ptr = unsafe { alloc(layout_for_capacity::<T>(new_cap)) } as *mut T;
+
+        // 2.
+        unsafe { core::ptr::copy(self.ptr, new_ptr, self.len()) };
+
+        // 4.
+        if self.cap != 0 {
+            unsafe { dealloc(self.ptr as *mut u8, layout_for_capacity::<T>(self.len())) };
+        }
+
+        // 5.
+        self.ptr = new_ptr;
+        self.cap = new_cap;
+    }
 }
 
 impl<T> Drop for MyVec<T> {
@@ -75,7 +93,7 @@ impl<T> Drop for MyVec<T> {
             for i in 0..self.len() {
                 core::ptr::drop_in_place(self.ptr.add(i));
             }
-            dealloc(self.ptr as *mut u8, layout_for_n_ts::<T>(self.len()))
+            dealloc(self.ptr as *mut u8, layout_for_capacity::<T>(self.cap))
         };
     }
 }
@@ -97,4 +115,10 @@ fn simple_test() {
     assert_eq!(*v.get(2).unwrap(), "foo");
 
     assert_eq!(v.len(), 3);
+}
+
+#[test]
+fn with_capacity_test() {
+    let v = MyVec::<String>::with_capacity(10);
+    assert!(v.can_insert_without_reallocating());
 }

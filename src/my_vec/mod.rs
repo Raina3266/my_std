@@ -2,18 +2,19 @@ use alloc::alloc::alloc;
 use alloc::alloc::dealloc;
 use core::alloc::Layout;
 
-const X: core::ptr::NonNull<i32> = core::ptr::NonNull::dangling();
-
-pub struct MyVecI32 {
-    ptr: *mut i32,
+pub struct MyVec<T> {
+    ptr: *mut T,
     len: usize,
 }
 
-fn layout_for_n_i32s(n: usize) -> Layout {
-    unsafe { Layout::from_size_align_unchecked(4 * n, 4) }
+fn layout_for_n_ts<T>(n: usize) -> Layout {
+    let size = core::mem::size_of::<T>();
+    let align = core::mem::align_of::<T>();
+
+    unsafe { Layout::from_size_align_unchecked(size * n, align) }
 }
 
-impl MyVecI32 {
+impl<T> MyVec<T> {
     pub fn new() -> Self {
         Self {
             ptr: core::ptr::null_mut(),
@@ -21,7 +22,7 @@ impl MyVecI32 {
         }
     }
 
-    pub fn push(&mut self, value: i32) {
+    pub fn push(&mut self, value: T) {
         // 1. new heap allocation with space for the new value
         // 2. copy the old values to the new allocation
         // 3. copy the new value to the new allocation
@@ -30,7 +31,7 @@ impl MyVecI32 {
 
         // 1.
         let space_required = self.len() + 1;
-        let new_ptr = unsafe { alloc(layout_for_n_i32s(space_required)) } as *mut i32;
+        let new_ptr = unsafe { alloc(layout_for_n_ts::<T>(space_required)) } as *mut T;
 
         // 2.
         unsafe { core::ptr::copy(self.ptr, new_ptr, self.len()) };
@@ -40,9 +41,8 @@ impl MyVecI32 {
         unsafe { core::ptr::write(end_ptr, value) };
 
         // 4.
-        // todo think about freeing the Ts individually
         if self.len() != 0 {
-            unsafe { dealloc(self.ptr as *mut u8, layout_for_n_i32s(self.len())) };
+            unsafe { dealloc(self.ptr as *mut u8, layout_for_n_ts::<T>(self.len())) };
         }
 
         // 5.
@@ -50,7 +50,7 @@ impl MyVecI32 {
         self.len += 1;
     }
 
-    pub fn get(&self, index: usize) -> Option<&i32> {
+    pub fn get(&self, index: usize) -> Option<&T> {
         let ptr = self.addr_of_nth(index)?;
         Some(unsafe { &*ptr })
     }
@@ -59,7 +59,7 @@ impl MyVecI32 {
         self.len
     }
 
-    fn addr_of_nth(&self, n: usize) -> Option<*mut i32> {
+    fn addr_of_nth(&self, n: usize) -> Option<*mut T> {
         if n >= self.len() {
             None
         } else {
@@ -69,27 +69,32 @@ impl MyVecI32 {
     }
 }
 
-impl Drop for MyVecI32 {
+impl<T> Drop for MyVec<T> {
     fn drop(&mut self) {
-        unsafe { dealloc(self.ptr as *mut u8, layout_for_n_i32s(self.len())) };
+        unsafe {
+            for i in 0..self.len() {
+                core::ptr::drop_in_place(self.ptr.add(i));
+            }
+            dealloc(self.ptr as *mut u8, layout_for_n_ts::<T>(self.len()))
+        };
     }
 }
 
 #[test]
 fn simple_test() {
-    let mut v = MyVecI32::new();
+    let mut v = MyVec::new();
 
-    v.push(1);
-    assert_eq!(*v.get(0).unwrap(), 1);
+    v.push(String::from("hello"));
+    assert_eq!(*v.get(0).unwrap(), "hello");
 
-    v.push(10);
-    assert_eq!(*v.get(0).unwrap(), 1);
-    assert_eq!(*v.get(1).unwrap(), 10);
+    v.push(String::from("world"));
+    assert_eq!(*v.get(0).unwrap(), "hello");
+    assert_eq!(*v.get(1).unwrap(), "world");
 
-    v.push(100);
-    assert_eq!(*v.get(0).unwrap(), 1);
-    assert_eq!(*v.get(1).unwrap(), 10);
-    assert_eq!(*v.get(2).unwrap(), 100);
+    v.push(String::from("foo"));
+    assert_eq!(*v.get(0).unwrap(), "hello");
+    assert_eq!(*v.get(1).unwrap(), "world");
+    assert_eq!(*v.get(2).unwrap(), "foo");
 
     assert_eq!(v.len(), 3);
 }

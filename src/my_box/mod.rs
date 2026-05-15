@@ -2,11 +2,16 @@ use core::ops::Deref;
 use core::ops::DerefMut;
 
 use core::alloc::Layout;
+use core::ptr::NonNull;
 use alloc::alloc::alloc;
 
+
+#[repr(transparent)]
 pub struct MyBox<T> {
-    ptr: *mut T,
+    ptr: NonNull<T>,
+    // ptr: *mut T that is never null
 }
+
 
 fn get_layout<T>() -> Layout {
     let size = core::mem::size_of::<T>();
@@ -34,6 +39,10 @@ fn get_layout<T>() -> Layout {
 // assert_eq!(t, t.clone());
 
 impl<T> MyBox<T> {
+    pub fn as_non_null(&self) -> NonNull<T> {
+        unsafe { core::mem::transmute(self) }
+    }
+    
     pub fn new(value: T) -> Self {
         // *mut T = &mut T (except, YOU are responsible for safety, not the compiler)
         // *mut T is a "raw pointer"
@@ -41,10 +50,10 @@ impl<T> MyBox<T> {
         // 2. move the i32 to the heap
         // 3. use the pointer we got in step 1 to create a `Self` and return it
         
-        let ptr = unsafe { alloc(get_layout::<T>()) };
-        let ptr = ptr as *mut T;
+        let ptr = unsafe { alloc(get_layout::<T>()) } as *mut T;
+        let ptr = NonNull::new(ptr).unwrap();
 
-        unsafe { core::ptr::write(ptr, value) };
+        unsafe { core::ptr::write(ptr.as_ptr(), value) };
 
         Self { ptr }
     }
@@ -53,8 +62,8 @@ impl<T> MyBox<T> {
 impl<T> Drop for MyBox<T> {
     fn drop(&mut self) {
         unsafe {
-            core::ptr::drop_in_place(self.ptr);
-            alloc::alloc::dealloc(self.ptr as *mut u8, get_layout::<T>());
+            core::ptr::drop_in_place(self.ptr.as_ptr());
+            alloc::alloc::dealloc(self.ptr.as_ptr() as *mut u8, get_layout::<T>());
         }
     }
 }
@@ -62,13 +71,13 @@ impl<T> Drop for MyBox<T> {
 impl<T> Deref for MyBox<T> {
     type Target = T;
     fn deref(&self) -> &<Self as Deref>::Target {
-        unsafe { &*self.ptr }
+        unsafe { &*self.ptr.as_ptr() }
     }
 }
 
 impl<T> DerefMut for MyBox<T> {
     fn deref_mut(&mut self) -> &mut <Self as Deref>::Target {
-        unsafe { &mut *self.ptr }
+        unsafe { &mut *self.ptr.as_ptr() }
     }
 }
 
@@ -80,8 +89,14 @@ fn simple_test() {
 
     *my_box = vec![1, 2, 3, 4];
     assert_eq!(my_box.len(), 4);
+}
+
+#[test]
+fn size_correct() {
+    use core::mem::size_of;
     
-    
+    assert_eq!(size_of::<MyBox<i32>>(), size_of::<usize>());
+    assert_eq!(size_of::<Option<MyBox<i32>>>(), size_of::<usize>());
 }
 
 // let b = MyBox::new(123);
@@ -106,23 +121,23 @@ fn simple_test() {
 // 
 
 
-#[test]
-fn foo() {
-    fn print_length(s: &str) {
-        println!("{}", s.len());
-    }
+// #[test]
+// fn foo() {
+//     fn print_length(s: &str) {
+//         println!("{}", s.len());
+//     }
     
-    let s = String::from("hello");
-    let b = Box::new(s);
-    b.to_lowercase();
-    print_length(&b);
-    let v = vec![2, 3, 4];
-    v.iter();
-    // a.b();
-    // 1. look at type of `a`, does it have a method called `b`?
-    // 2. if not, look at all the traits that are in-scope (i.e. there is a `use whatever::Trait` in this file). Do any of them BOTH:
-    //   - are implemented by `a`
-    //   - have a method called `b`
-    // 3. if not, does `a` implement `Deref`? If it does, find the target type, and go back to step 1
+//     let s = String::from("hello");
+//     let b = Box::new(s);
+//     b.to_lowercase();
+//     print_length(&b);
+//     let v = vec![2, 3, 4];
+//     v.iter();
+//     // a.b();
+//     // 1. look at type of `a`, does it have a method called `b`?
+//     // 2. if not, look at all the traits that are in-scope (i.e. there is a `use whatever::Trait` in this file). Do any of them BOTH:
+//     //   - are implemented by `a`
+//     //   - have a method called `b`
+//     // 3. if not, does `a` implement `Deref`? If it does, find the target type, and go back to step 1
     
-}
+// }

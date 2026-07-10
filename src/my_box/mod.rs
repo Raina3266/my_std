@@ -59,6 +59,14 @@ impl<T> MyBox<T> {
     }
 }
 
+impl<T> Clone for MyBox<T> where T: Clone {
+    fn clone(&self) -> Self {
+        let inner: &T = self;
+        let clone = T::clone(inner);
+        MyBox::new(clone)
+    }
+}
+
 impl<T> Drop for MyBox<T> {
     fn drop(&mut self) {
         unsafe {
